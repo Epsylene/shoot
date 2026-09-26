@@ -5,6 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread::JoinHandle;
 
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::Event;
@@ -80,19 +81,30 @@ fn run(mode: Mode) -> Result<(), Error> {
     };
 
     let raw = capture(&conn, root, screen.root_depth, &rect)?;
-    let (rgb, w, h) = if mode == Mode::Area {
+    let (rgb, w, h, flash) = if mode == Mode::Area {
         let Some(sel) = overlay::select(&conn, screen, &raw)? else {
             return Ok(());
         };
-        overlay::flash(&conn, screen_num, &sel)?;
-        (to_rgb(&raw, rect.w, &sel), sel.w, sel.h)
+        (to_rgb(&raw, rect.w, &sel), sel.w, sel.h, spawn_flash(sel))
     } else {
-        overlay::flash(&conn, screen_num, &rect)?;
-        (to_rgb(&raw, rect.w, &Rect { x: 0, y: 0, w: rect.w, h: rect.h }), rect.w, rect.h)
+        let whole = Rect { x: 0, y: 0, w: rect.w, h: rect.h };
+        (to_rgb(&raw, rect.w, &whole), rect.w, rect.h, spawn_flash(rect))
     };
     let png = encode_png(&rgb, w as u32, h as u32)?;
     save(&png)?;
-    serve_clipboard(&conn, root, &atoms, png)
+    serve_clipboard(&conn, root, &atoms, png)?;
+    flash.join().map_err(|_| "dimming thread panicked")??;
+    Ok(())
+}
+
+fn spawn_flash(r: Rect) -> JoinHandle<Result<(), String>> {
+    std::thread::spawn(move || {
+        let run = || -> Result<(), Error> {
+            let (conn, screen_num) = x11rb::connect(None)?;
+            overlay::flash(&conn, screen_num, &r)
+        };
+        run().map_err(|e| e.to_string())
+    })
 }
 
 fn get_cardinals(conn: &RustConnection, window: Window, property: Atom, ty: Atom) -> Result<Vec<u32>, Error> {
