@@ -60,14 +60,24 @@ These commands replace any custom shortcuts that already use `custom0` to `custo
 
 ## Configuration
 
-There is no configuration file. To change the darkening effect, edit the constants at the top of `src/overlay.rs` and build again:
+shoot reads `$XDG_CONFIG_HOME/shoot/config.toml`. If `XDG_CONFIG_HOME` is not set, it reads `~/.config/shoot/config.toml`. The file uses a small part of TOML: one `key = value` on each line, strings in double quotes, whole numbers, and `#` comments. Every key is optional. If the file does not exist, shoot uses the defaults.
 
-| Constant      | Controls                                                 |
-| ------------- | -------------------------------------------------------- |
-| `FLASH_ALPHA` | How dark the effect after a shot starts (0 to 255)       |
-| `FLASH_HOLD`  | How long the effect stays at full darkness                 |
-| `FLASH_STEPS`, `FLASH_STEP` | How many steps the fade has, and how long each step is |
-| `DIM`         | How bright the frozen screen is in `area` mode, out of 256 |
+| Key               | Default                               | Controls                                                    |
+| ----------------- | ------------------------------------- | ----------------------------------------------------------- |
+| `directory`       | `"~/Pictures"`                        | The folder for the screenshots. A leading `~/` means your home folder. |
+| `filename`        | `"Screenshot from %Y-%m-%d %H-%M-%S"` | The file name without `.png`, in `strftime` format          |
+| `flash_opacity`   | `38`                                  | How dark the effect after a shot is, in percent. `0` turns it off. |
+| `flash_hold_ms`   | `60`                                  | How long the effect stays at full darkness                  |
+| `flash_fade_ms`   | `144`                                 | How long the fade back takes                                |
+| `area_brightness` | `55`                                  | How bright the frozen screen is in `area` mode, in percent  |
+
+`config.toml` in this repository holds these defaults. To install it:
+
+```
+install -Dm644 config.toml ~/.config/shoot/config.toml
+```
+
+If the file has an unknown key, a key set twice, or a value that is not valid, shoot does not take the shot. It shows the file, the line and the problem.
 
 ## Errors
 

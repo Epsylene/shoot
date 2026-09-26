@@ -1,0 +1,18 @@
+# shoot configuration: $XDG_CONFIG_HOME/shoot/config.toml (~/.config/shoot/config.toml).
+# Every key is optional. A missing key keeps the default shown here.
+
+# Folder for the screenshots. A leading ~/ means your home folder.
+directory = "~/Pictures"
+
+# File name without ".png", in strftime format. Must not contain '/'.
+filename = "Screenshot from %Y-%m-%d %H-%M-%S"
+
+# Darkening shown after each shot, in percent. 0 turns it off.
+flash_opacity = 38
+
+# Time at full darkness, then time of the fade back, in milliseconds.
+flash_hold_ms = 60
+flash_fade_ms = 144
+
+# Brightness of the frozen screen while you select an area, in percent.
+area_brightness = 55

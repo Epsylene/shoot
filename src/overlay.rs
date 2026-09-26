@@ -8,17 +8,17 @@ use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 use x11rb::{COPY_FROM_PARENT, CURRENT_TIME, NONE};
 
+use crate::config::Flash;
 use crate::{Error, Rect};
 
-const FLASH_ALPHA: u32 = 0x60;
-const FLASH_HOLD: Duration = Duration::from_millis(60);
-const FLASH_STEPS: u32 = 8;
-const FLASH_STEP: Duration = Duration::from_millis(18);
-const DIM: u16 = 140;
+const FRAME: Duration = Duration::from_millis(16);
 const XK_ESCAPE: Keysym = 0xff1b;
 const XC_CROSSHAIR: u16 = 34;
 
-pub fn flash(conn: &RustConnection, screen_num: usize, r: &Rect) -> Result<(), Error> {
+pub fn flash(conn: &RustConnection, screen_num: usize, r: &Rect, flash: &Flash) -> Result<(), Error> {
+    if flash.alpha == 0 {
+        return Ok(());
+    }
     let screen = &conn.setup().roots[screen_num];
     let cm = conn.intern_atom(false, format!("_NET_WM_CM_S{screen_num}").as_bytes())?.reply()?.atom;
     if conn.get_selection_owner(cm)?.reply()?.owner == NONE {
@@ -43,7 +43,7 @@ pub fn flash(conn: &RustConnection, screen_num: usize, r: &Rect) -> Result<(), E
         WindowClass::INPUT_OUTPUT,
         visual,
         &CreateWindowAux::new()
-            .background_pixel(FLASH_ALPHA << 24)
+            .background_pixel(flash.alpha << 24)
             .border_pixel(0)
             .colormap(colormap)
             .override_redirect(1),
@@ -51,13 +51,14 @@ pub fn flash(conn: &RustConnection, screen_num: usize, r: &Rect) -> Result<(), E
     conn.shape_rectangles(shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, window, 0, 0, &[])?;
     conn.map_window(window)?;
     conn.flush()?;
-    sleep(FLASH_HOLD);
-    for step in (0..FLASH_STEPS).rev() {
-        let alpha = FLASH_ALPHA * step / FLASH_STEPS;
+    sleep(flash.hold);
+    let steps = (flash.fade.as_millis() / FRAME.as_millis()).max(1) as u32;
+    for step in (0..steps).rev() {
+        let alpha = flash.alpha * step / steps;
         conn.change_window_attributes(window, &ChangeWindowAttributesAux::new().background_pixel(alpha << 24))?;
         conn.clear_area(false, window, 0, 0, 0, 0)?;
         conn.flush()?;
-        sleep(FLASH_STEP);
+        sleep(flash.fade / steps);
     }
     conn.destroy_window(window)?;
     conn.free_colormap(colormap)?;
@@ -176,7 +177,7 @@ fn span(a: (i16, i16), b: (i16, i16), w: u16, h: u16) -> Rect {
     Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
 }
 
-pub fn select(conn: &RustConnection, screen: &Screen, raw: &[u8]) -> Result<Option<Rect>, Error> {
+pub fn select(conn: &RustConnection, screen: &Screen, raw: &[u8], dim: u16) -> Result<Option<Rect>, Error> {
     let (w, h, depth, root) = (screen.width_in_pixels, screen.height_in_pixels, screen.root_depth, screen.root);
 
     let font = conn.generate_id()?;
@@ -197,7 +198,7 @@ pub fn select(conn: &RustConnection, screen: &Screen, raw: &[u8]) -> Result<Opti
     let overlay = Overlay { conn, window, bright, dark, back, gc, cursor, w, h };
 
     put(conn, bright, gc, raw, w, depth)?;
-    let dimmed: Vec<u8> = raw.iter().map(|&b| ((b as u16 * DIM) >> 8) as u8).collect();
+    let dimmed: Vec<u8> = raw.iter().map(|&b| ((b as u16 * dim) >> 8) as u8).collect();
     put(conn, dark, gc, &dimmed, w, depth)?;
 
     conn.create_window(

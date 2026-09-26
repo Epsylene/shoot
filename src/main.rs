@@ -1,6 +1,8 @@
+mod config;
 mod overlay;
 
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -68,6 +70,7 @@ fn main() {
 }
 
 fn run(mode: Mode) -> Result<(), Error> {
+    let config = config::load()?;
     let (conn, screen_num) = x11rb::connect(None)?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
@@ -82,26 +85,26 @@ fn run(mode: Mode) -> Result<(), Error> {
 
     let raw = capture(&conn, root, screen.root_depth, &rect)?;
     let (rgb, w, h, flash) = if mode == Mode::Area {
-        let Some(sel) = overlay::select(&conn, screen, &raw)? else {
+        let Some(sel) = overlay::select(&conn, screen, &raw, config.area_dim)? else {
             return Ok(());
         };
-        (to_rgb(&raw, rect.w, &sel), sel.w, sel.h, spawn_flash(sel))
+        (to_rgb(&raw, rect.w, &sel), sel.w, sel.h, spawn_flash(sel, config.flash))
     } else {
         let whole = Rect { x: 0, y: 0, w: rect.w, h: rect.h };
-        (to_rgb(&raw, rect.w, &whole), rect.w, rect.h, spawn_flash(rect))
+        (to_rgb(&raw, rect.w, &whole), rect.w, rect.h, spawn_flash(rect, config.flash))
     };
     let png = encode_png(&rgb, w as u32, h as u32)?;
-    save(&png)?;
+    save(&png, &config)?;
     serve_clipboard(&conn, root, &atoms, png)?;
     flash.join().map_err(|_| "dimming thread panicked")??;
     Ok(())
 }
 
-fn spawn_flash(r: Rect) -> JoinHandle<Result<(), String>> {
+fn spawn_flash(r: Rect, flash: config::Flash) -> JoinHandle<Result<(), String>> {
     std::thread::spawn(move || {
         let run = || -> Result<(), Error> {
             let (conn, screen_num) = x11rb::connect(None)?;
-            overlay::flash(&conn, screen_num, &r)
+            overlay::flash(&conn, screen_num, &r, &flash)
         };
         run().map_err(|e| e.to_string())
     })
@@ -192,27 +195,26 @@ fn encode_png(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
-fn timestamp_name() -> String {
-    unsafe {
+fn timestamp_name(format: &str) -> Result<String, Error> {
+    let format = CString::new(format).map_err(|_| "filename contains a NUL byte")?;
+    let mut buf = [0u8; 1024];
+    let len = unsafe {
         let now = libc::time(std::ptr::null_mut());
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&now, &mut tm);
-        format!(
-            "Screenshot from {:04}-{:02}-{:02} {:02}-{:02}-{:02}",
-            tm.tm_year + 1900,
-            tm.tm_mon + 1,
-            tm.tm_mday,
-            tm.tm_hour,
-            tm.tm_min,
-            tm.tm_sec
-        )
+        libc::strftime(buf.as_mut_ptr().cast(), buf.len(), format.as_ptr(), &tm)
+    };
+    let name = String::from_utf8_lossy(&buf[..len]).into_owned();
+    if name.is_empty() || name.contains('/') {
+        return Err(format!("filename expands to {name:?}, which is empty, too long or contains '/'").into());
     }
+    Ok(name)
 }
 
-fn save(png: &[u8]) -> Result<PathBuf, Error> {
-    let dir = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Pictures");
-    std::fs::create_dir_all(&dir)?;
-    let base = timestamp_name();
+fn save(png: &[u8], config: &config::Config) -> Result<PathBuf, Error> {
+    let dir = &config.directory;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let base = timestamp_name(&config.filename)?;
     for n in 1.. {
         let name = if n == 1 { format!("{base}.png") } else { format!("{base} - {n}.png") };
         let path = dir.join(name);
