@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
-use std::process::Command;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::thread::JoinHandle;
 
 use x11rb::connection::{Connection, RequestConnection};
@@ -94,7 +95,10 @@ fn run(mode: Mode) -> Result<(), Error> {
         (to_rgb(&raw, rect.w, &whole), rect.w, rect.h, spawn_flash(rect, config.flash))
     };
     let png = encode_png(&rgb, w as u32, h as u32)?;
-    save(&png, &config)?;
+    let path = save(&png, &config)?;
+    if let Err(e) = notify_saved(&path) {
+        eprintln!("shoot: notification: {e}");
+    }
     serve_clipboard(&conn, root, &atoms, png)?;
     flash.join().map_err(|_| "dimming thread panicked")??;
     Ok(())
@@ -228,6 +232,47 @@ fn save(png: &[u8], config: &config::Config) -> Result<PathBuf, Error> {
         }
     }
     unreachable!()
+}
+
+// The notification stays in the tray. Clicking it opens the folder in the file
+// manager with the file selected. notify-send waits for the click, so it runs
+// detached and outlives shoot.
+fn notify_saved(path: &Path) -> Result<(), Error> {
+    const SCRIPT: &str = r#"
+        action=$(notify-send -a shoot -i "$1" -h boolean:suppress-sound:true -A default=Show "Screenshot saved" "$2")
+        [ "$action" = default ] || exit 0
+        gdbus call --session --dest org.freedesktop.FileManager1 --object-path /org/freedesktop/FileManager1 \
+            --method org.freedesktop.FileManager1.ShowItems "['$3']" "" >/dev/null
+    "#;
+    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    Command::new("sh")
+        .args(["-c", SCRIPT, "sh"])
+        .arg(path)
+        .arg(escape_markup(&name))
+        .arg(file_uri(path))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+fn escape_markup(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+// Everything except unreserved characters and '/' is percent-encoded, so the
+// URI is also safe inside the single quotes of a GVariant string.
+fn file_uri(path: &Path) -> String {
+    let mut uri = String::from("file://");
+    for &b in path.as_os_str().as_bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
 }
 
 struct Transfer {

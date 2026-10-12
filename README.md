@@ -20,6 +20,10 @@ After each shot, the captured region becomes a little darker for approximately 2
 
 Files get the same names as the files from gnome-screenshot: `Screenshot from YYYY-MM-DD HH-MM-SS.png`. If the name is already in use, shoot adds ` - 2`, ` - 3` and so on.
 
+## Notification
+
+After each shot, shoot sends a silent desktop notification with the file name and a thumbnail. Click it, in the banner or later in the notification tray, to open the folder in the file manager with the file selected. This uses `notify-send` and the `org.freedesktop.FileManager1` D-Bus interface, which Nemo, Nautilus, Dolphin and others provide. A small `notify-send` process waits for each notification until you click or dismiss it.
+
 ## Clipboard
 
 shoot puts the PNG on the `CLIPBOARD` selection as `image/png`. If a clipboard manager is running (for example `csd-clipboard` on Cinnamon), shoot gives the image to it and then exits. The image stays available after shoot stops. If no clipboard manager is running, shoot stays in the background until a different program takes the clipboard.
