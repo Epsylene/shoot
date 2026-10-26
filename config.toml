@@ -4,7 +4,7 @@
 # Folder for the screenshots. A leading ~/ means your home folder.
 directory = "~/Pictures"
 
-# File name without ".png", in strftime format. Must not contain '/'.
+# File name without ".webp", in strftime format. Must not contain '/'.
 filename = "Screenshot from %Y-%m-%d %H-%M-%S"
 
 # Darkening shown after each shot, in percent. 0 turns it off.

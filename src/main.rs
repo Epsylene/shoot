@@ -94,12 +94,26 @@ fn run(mode: Mode) -> Result<(), Error> {
         let whole = Rect { x: 0, y: 0, w: rect.w, h: rect.h };
         (to_rgb(&raw, rect.w, &whole), rect.w, rect.h, spawn_flash(rect, config.flash))
     };
-    let png = encode_png(&rgb, w as u32, h as u32)?;
-    let path = save(&png, &config)?;
-    if let Err(e) = notify_saved(&path) {
-        eprintln!("shoot: notification: {e}");
-    }
-    serve_clipboard(&conn, root, &atoms, png)?;
+    // The file is lossless WebP, about a third smaller than PNG but slower to
+    // encode. The clipboard gets a fast PNG, which every program can paste, so
+    // it is ready while the file is still being encoded.
+    std::thread::scope(|s| {
+        let saving = s.spawn(|| {
+            let run = || -> Result<(), Error> {
+                let webp = encode_webp(&rgb, w as u32, h as u32)?;
+                let path = save(&webp, &config)?;
+                if let Err(e) = notify_saved(&path) {
+                    eprintln!("shoot: notification: {e}");
+                }
+                Ok(())
+            };
+            run().map_err(|e| e.to_string())
+        });
+        let png = encode_png(&rgb, w as u32, h as u32)?;
+        let served = serve_clipboard(&conn, root, &atoms, png);
+        saving.join().map_err(|_| "saving thread panicked")??;
+        served
+    })?;
     flash.join().map_err(|_| "dimming thread panicked")??;
     Ok(())
 }
@@ -199,6 +213,38 @@ fn encode_png(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
+// Lossless preset 3 (method 3, effort 30). On a set of real screenshots it
+// gave files 34% smaller than encode_png. It took 250 ms on average and up to
+// 0.8 s for a busy 1920x1200 game screen. Higher presets saved less than 1% more and took 2 to 5 times longer.
+fn encode_webp(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>, Error> {
+    use libwebp_sys::*;
+    unsafe {
+        let mut config: WebPConfig = std::mem::zeroed();
+        let mut picture: WebPPicture = std::mem::zeroed();
+        if WebPConfigInitInternal(&mut config, WebPPreset::WEBP_PRESET_DEFAULT, 75.0, WEBP_ENCODER_ABI_VERSION as _) == 0
+            || WebPConfigLosslessPreset(&mut config, 3) == 0
+            || WebPPictureInitInternal(&mut picture, WEBP_ENCODER_ABI_VERSION as _) == 0
+        {
+            return Err("libwebp version mismatch".into());
+        }
+        config.exact = 1;
+        picture.use_argb = 1;
+        picture.width = w as i32;
+        picture.height = h as i32;
+        let mut writer: WebPMemoryWriter = std::mem::zeroed();
+        WebPMemoryWriterInit(&mut writer);
+        picture.writer = Some(WebPMemoryWrite);
+        picture.custom_ptr = (&raw mut writer).cast();
+
+        let ok = WebPPictureImportRGB(&mut picture, rgb.as_ptr(), w as i32 * 3) != 0 && WebPEncode(&config, &mut picture) != 0;
+        let error = picture.error_code;
+        WebPPictureFree(&mut picture);
+        let out = ok.then(|| std::slice::from_raw_parts(writer.mem, writer.size).to_vec());
+        WebPMemoryWriterClear(&mut writer);
+        out.ok_or_else(|| format!("WebP encoding failed: {error:?}").into())
+    }
+}
+
 fn timestamp_name(format: &str) -> Result<String, Error> {
     let format = CString::new(format).map_err(|_| "filename contains a NUL byte")?;
     let mut buf = [0u8; 1024];
@@ -215,16 +261,16 @@ fn timestamp_name(format: &str) -> Result<String, Error> {
     Ok(name)
 }
 
-fn save(png: &[u8], config: &config::Config) -> Result<PathBuf, Error> {
+fn save(webp: &[u8], config: &config::Config) -> Result<PathBuf, Error> {
     let dir = &config.directory;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let base = timestamp_name(&config.filename)?;
     for n in 1.. {
-        let name = if n == 1 { format!("{base}.png") } else { format!("{base} - {n}.png") };
+        let name = if n == 1 { format!("{base}.webp") } else { format!("{base} - {n}.webp") };
         let path = dir.join(name);
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
-                file.write_all(png)?;
+                file.write_all(webp)?;
                 return Ok(path);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,

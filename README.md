@@ -18,7 +18,11 @@ In `area` mode, the screen freezes and becomes darker. Drag with the left button
 
 After each shot, the captured region becomes a little darker for approximately 200 ms. This effect needs a compositor. Without one, shoot does not show it.
 
-Files get the same names as the files from gnome-screenshot: `Screenshot from YYYY-MM-DD HH-MM-SS.png`. If the name is already in use, shoot adds ` - 2`, ` - 3` and so on.
+Files get the same names as the files from gnome-screenshot, but with a different extension: `Screenshot from YYYY-MM-DD HH-MM-SS.webp`. If the name is already in use, shoot adds ` - 2`, ` - 3` and so on.
+
+## File format
+
+shoot saves lossless WebP. The pixels are exactly the same as in a PNG, but the files are smaller: about a third smaller for game and photo content, and up to three quarters smaller for text and user interfaces. Encoding takes up to about 0.8 s for a busy 1920×1200 game screen, and less for smaller or simpler shots. It runs at the same time as the clipboard step, so the clipboard is not delayed. Nemo, the notification thumbnail and most browsers and chat apps open WebP. On Debian and Ubuntu, GTK programs need the `webp-pixbuf-loader` package.
 
 ## Notification
 
@@ -26,7 +30,7 @@ After each shot, shoot sends a silent desktop notification with the file name an
 
 ## Clipboard
 
-shoot puts the PNG on the `CLIPBOARD` selection as `image/png`. If a clipboard manager is running (for example `csd-clipboard` on Cinnamon), shoot gives the image to it and then exits. The image stays available after shoot stops. If no clipboard manager is running, shoot stays in the background until a different program takes the clipboard.
+shoot puts the image on the `CLIPBOARD` selection as `image/png`, because more programs accept PNG than WebP when you paste. This PNG uses fast compression and is not saved to disk. If a clipboard manager is running (for example `csd-clipboard` on Cinnamon), shoot gives the image to it and then exits. The image stays available after shoot stops. If no clipboard manager is running, shoot stays in the background until a different program takes the clipboard.
 
 ## Build and install
 
@@ -35,7 +39,7 @@ cargo build --release
 install -Dm755 target/release/shoot ~/.local/bin/shoot
 ```
 
-shoot connects to the X server directly through `x11rb`. It does not need Xlib, libxcb or other system libraries. It does not work in a Wayland session.
+shoot connects to the X server directly through `x11rb`. It does not need Xlib, libxcb or other system libraries. The build compiles a copy of libwebp into the binary, so it needs a C compiler. shoot does not work in a Wayland session.
 
 ## Key bindings (Cinnamon)
 
@@ -69,7 +73,7 @@ shoot reads `$XDG_CONFIG_HOME/shoot/config.toml`. If `XDG_CONFIG_HOME` is not se
 | Key               | Default                               | Controls                                                    |
 | ----------------- | ------------------------------------- | ----------------------------------------------------------- |
 | `directory`       | `"~/Pictures"`                        | The folder for the screenshots. A leading `~/` means your home folder. |
-| `filename`        | `"Screenshot from %Y-%m-%d %H-%M-%S"` | The file name without `.png`, in `strftime` format          |
+| `filename`        | `"Screenshot from %Y-%m-%d %H-%M-%S"` | The file name without `.webp`, in `strftime` format         |
 | `flash_opacity`   | `38`                                  | How dark the effect after a shot is, in percent. `0` turns it off. |
 | `flash_hold_ms`   | `60`                                  | How long the effect stays at full darkness                  |
 | `flash_fade_ms`   | `144`                                 | How long the fade back takes                                |
